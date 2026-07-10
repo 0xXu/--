@@ -16,8 +16,8 @@ def load_training_data(source: str, *, deduplicate: bool = True) -> pd.DataFrame
     """
     frame = pd.read_csv(source)
     _require_columns(frame, [TITLE_COLUMN, TEXT_COLUMN, TARGET_COLUMN])
-    _raise_on_conflicting_labels(frame)
     if deduplicate:
+        frame = drop_conflicting_text_pairs(frame)
         frame = frame.drop_duplicates(subset=[TITLE_COLUMN, TEXT_COLUMN])
     return frame.reset_index(drop=True)
 
@@ -35,6 +35,25 @@ def join_text_fields(frame: pd.DataFrame) -> pd.Series:
     return frame[TITLE_COLUMN].fillna("").str.strip() + "\n" + frame[TEXT_COLUMN].fillna("").str.strip()
 
 
+def conflicting_text_pair_mask(frame: pd.DataFrame) -> pd.Series:
+    """Identify rows whose exact title/description pair has more than one label.
+
+    A contradictory pair cannot be learned reliably and can leak inconsistent targets across a
+    validation split. The raw mask is also used by profiling so quality reports never discard
+    evidence of the problem.
+    """
+    _require_columns(frame, [TITLE_COLUMN, TEXT_COLUMN, TARGET_COLUMN])
+    label_counts = frame.groupby([TITLE_COLUMN, TEXT_COLUMN], dropna=False)[TARGET_COLUMN].nunique()
+    conflicting_pairs = label_counts[label_counts.gt(1)].index
+    pair_index = pd.MultiIndex.from_frame(frame[[TITLE_COLUMN, TEXT_COLUMN]])
+    return pd.Series(pair_index.isin(conflicting_pairs), index=frame.index)
+
+
+def drop_conflicting_text_pairs(frame: pd.DataFrame) -> pd.DataFrame:
+    """Drop every row belonging to a contradictory title/description pair."""
+    return frame.loc[~conflicting_text_pair_mask(frame)].copy()
+
+
 def write_submission(ids: pd.Series, predictions, output_path: str | Path) -> Path:
     """Write predictions in the competition's required submission shape."""
     path = Path(output_path)
@@ -48,8 +67,3 @@ def _require_columns(frame: pd.DataFrame, required: list[str]) -> None:
     if missing:
         raise ValueError(f"Dataset is missing required columns: {', '.join(sorted(missing))}")
 
-
-def _raise_on_conflicting_labels(frame: pd.DataFrame) -> None:
-    label_counts = frame.groupby([TITLE_COLUMN, TEXT_COLUMN], dropna=False)[TARGET_COLUMN].nunique()
-    if (label_counts > 1).any():
-        raise ValueError("Identical title/description pairs have conflicting labels.")

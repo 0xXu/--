@@ -60,8 +60,8 @@ uv run --extra transformer news-classify evaluate --model deberta --epochs 3 --m
 ```
 
 Evaluation writes metrics, a confusion matrix, and validation predictions under `artifacts/`.
-The split is made after exact `Title` + `Description` deduplication to avoid duplicate-text
-leakage.
+The split is made after removing every conflicting-label `Title` + `Description` pair and then
+exact deduplication, preventing duplicate-text leakage and contradictory training targets.
 
 ## Train and create a submission
 
