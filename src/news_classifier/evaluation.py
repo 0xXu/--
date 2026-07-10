@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score
 from sklearn.model_selection import train_test_split
@@ -28,7 +29,7 @@ def write_evaluation(
     """Write metrics, confusion matrix, and row-level validation predictions."""
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
-    labels = sorted(validation[TARGET_COLUMN].unique())
+    labels = [int(label) for label in sorted(validation[TARGET_COLUMN].unique())]
     actual = validation[TARGET_COLUMN]
     metrics = {
         "accuracy": accuracy_score(actual, predictions),
@@ -37,6 +38,15 @@ def write_evaluation(
         "labels": labels,
         "confusion_matrix": confusion_matrix(actual, predictions, labels=labels).tolist(),
     }
-    (output / f"{prefix}-metrics.json").write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
+    (output / f"{prefix}-metrics.json").write_text(
+        json.dumps(metrics, indent=2, default=_json_default) + "\n", encoding="utf-8"
+    )
     validation.assign(prediction=predictions).to_csv(output / f"{prefix}-validation-predictions.csv", index=False)
     return metrics
+
+
+def _json_default(value):
+    """Convert NumPy scalar values emitted by pandas/sklearn into JSON primitives."""
+    if isinstance(value, np.generic):
+        return value.item()
+    raise TypeError(f"Cannot serialize {type(value).__name__} to JSON")
