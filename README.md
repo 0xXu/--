@@ -35,6 +35,10 @@ GPU with 8 GB VRAM, the DeBERTa defaults are a batch size of 8, evaluation batch
 FP16, and four gradient-accumulation steps (effective batch size 32). If CUDA runs out of memory,
 lower `--train-batch-size` to 4 before reducing `--max-length`.
 
+The transformer extra explicitly installs `sentencepiece` and `protobuf`, which the DeBERTa-v3
+tokenizer requires. On Windows, Hugging Face cache symlink and `hf_xet` messages are performance
+warnings only; they do not prevent training.
+
 ## Inspect the data
 
 ```bash
