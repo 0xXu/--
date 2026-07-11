@@ -31,9 +31,19 @@ same validation size while selecting hyperparameters, then use `submit` once wit
 
 The checked-in `.python-version` makes uv provision CPython 3.12 on this machine (where the
 `python` command currently points only to the Microsoft Store alias). For its RTX 4060 Laptop
-GPU with 8 GB VRAM, the DeBERTa defaults are a batch size of 8, evaluation batch size of 16,
-FP16, and four gradient-accumulation steps (effective batch size 32). If CUDA runs out of memory,
-lower `--train-batch-size` to 4 before reducing `--max-length`.
+GPU with 8 GB VRAM, the DeBERTa defaults are a batch size of 16, evaluation batch size of 16,
+FP16, and two gradient-accumulation steps (effective batch size 32). GPU batches are padded to a
+multiple of eight for Tensor Core efficiency. If CUDA runs out of memory, lower
+`--train-batch-size` to 8 and raise `--gradient-accumulation-steps` to 4 before reducing
+`--max-length`.
+
+To benchmark TorchInductor after the normal baseline is working, add `--torch-compile`. It makes
+the first steps slower while compiling, then may improve later epochs:
+
+```bash
+uv run news-classify evaluate --model deberta --epochs 4 --torch-compile \
+  --artifacts-dir artifacts/deberta-e4-compiled
+```
 
 The transformer extra explicitly installs `sentencepiece` and `protobuf`, which the DeBERTa-v3
 tokenizer requires. On Windows, Hugging Face cache symlink and `hf_xet` messages are performance

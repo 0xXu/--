@@ -27,9 +27,14 @@ def _add_model_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-length", type=int, default=256)
     parser.add_argument("--learning-rate", type=float, default=2e-5)
     parser.add_argument("--epochs", type=float, default=3.0)
-    parser.add_argument("--train-batch-size", type=int, default=8)
+    parser.add_argument("--train-batch-size", type=int, default=16)
     parser.add_argument("--eval-batch-size", type=int, default=16)
-    parser.add_argument("--gradient-accumulation-steps", type=int, default=4)
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=2)
+    parser.add_argument(
+        "--torch-compile",
+        action="store_true",
+        help="Compile the training graph with TorchInductor after an initial warm-up.",
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,6 +69,7 @@ def _transformer_config(args: argparse.Namespace, output_dir: str) -> Transforme
         train_batch_size=args.train_batch_size,
         eval_batch_size=args.eval_batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
+        torch_compile=args.torch_compile,
         seed=args.seed,
         output_dir=output_dir,
     )

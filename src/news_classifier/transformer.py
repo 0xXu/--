@@ -17,9 +17,10 @@ class TransformerConfig:
     max_length: int = 256
     learning_rate: float = 2e-5
     epochs: float = 3.0
-    train_batch_size: int = 8
+    train_batch_size: int = 16
     eval_batch_size: int = 16
-    gradient_accumulation_steps: int = 4
+    gradient_accumulation_steps: int = 2
+    torch_compile: bool = False
     seed: int = 42
     output_dir: str = "artifacts/deberta-checkpoints"
 
@@ -73,7 +74,10 @@ def train_transformer(
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         processing_class=tokenizer,
-        data_collator=dependencies["DataCollatorWithPadding"](tokenizer=tokenizer),
+        data_collator=dependencies["DataCollatorWithPadding"](
+            tokenizer=tokenizer,
+            pad_to_multiple_of=8 if dependencies["torch"].cuda.is_available() else None,
+        ),
         compute_metrics=_compute_metrics if validation is not None else None,
     )
     trainer.train()
@@ -102,27 +106,34 @@ def _training_arguments(config: TransformerConfig, torch, has_validation: bool):
     dependencies = _load_dependencies()
     output_dir = Path(config.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    return dependencies["TrainingArguments"](
-        output_dir=str(output_dir),
-        learning_rate=config.learning_rate,
-        per_device_train_batch_size=config.train_batch_size,
-        per_device_eval_batch_size=config.eval_batch_size,
-        gradient_accumulation_steps=config.gradient_accumulation_steps,
-        num_train_epochs=config.epochs,
-        weight_decay=0.01,
-        eval_strategy="epoch" if has_validation else "no",
-        save_strategy="epoch" if has_validation else "no",
-        load_best_model_at_end=has_validation,
-        metric_for_best_model="macro_f1" if has_validation else None,
-        greater_is_better=True,
-        save_total_limit=1,
-        logging_strategy="steps",
-        logging_steps=100,
-        report_to=[],
-        seed=config.seed,
-        data_seed=config.seed,
-        fp16=torch.cuda.is_available(),
-    )
+    arguments = {
+        "output_dir": str(output_dir),
+        "learning_rate": config.learning_rate,
+        "per_device_train_batch_size": config.train_batch_size,
+        "per_device_eval_batch_size": config.eval_batch_size,
+        "gradient_accumulation_steps": config.gradient_accumulation_steps,
+        "num_train_epochs": config.epochs,
+        "weight_decay": 0.01,
+        "eval_strategy": "epoch" if has_validation else "no",
+        "save_strategy": "epoch" if has_validation else "no",
+        "load_best_model_at_end": has_validation,
+        "metric_for_best_model": "macro_f1" if has_validation else None,
+        "greater_is_better": True,
+        "save_total_limit": 1,
+        "logging_strategy": "steps",
+        "logging_steps": 100,
+        "report_to": [],
+        "seed": config.seed,
+        "data_seed": config.seed,
+        "fp16": torch.cuda.is_available(),
+    }
+    if config.torch_compile:
+        arguments.update(
+            torch_compile=True,
+            torch_compile_backend="inductor",
+            torch_compile_mode="reduce-overhead",
+        )
+    return dependencies["TrainingArguments"](**arguments)
 
 
 def _compute_metrics(evaluation_prediction) -> dict[str, float]:
