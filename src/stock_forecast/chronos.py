@@ -119,3 +119,45 @@ def forecast_chronos(training_target: pd.Series, horizon: int, config: ChronosCo
     if len(forecast) != horizon:
         raise RuntimeError(f"Chronos-2 returned {len(forecast)} predictions; expected {horizon}.")
     return pd.Series(forecast["predictions"].to_numpy())
+
+
+def forecast_chronos_lora(
+    history: pd.Series,
+    horizon: int,
+    config: ChronosConfig,
+    *,
+    context_length: int = 256,
+    steps: int = 200,
+    output_dir: str = "chronos-lora-runs",
+) -> pd.Series:
+    """Fine-tune a fresh Chronos-2 LoRA adapter without exposing future labels."""
+    if len(history) < 2 * horizon + context_length:
+        raise ValueError("History is too short for leakage-free LoRA training and validation.")
+    torch = _load_torch()
+    device = select_device(config.device, torch)
+    dtype = configure_acceleration(torch, device)
+    from chronos import Chronos2Pipeline
+
+    pipeline = load_pipeline(Chronos2Pipeline, config, device, dtype)
+    validation_start = len(history) - context_length - horizon
+    train_values = history.iloc[:validation_start].to_numpy()
+    validation_values = history.iloc[validation_start:].to_numpy()
+    tuned = pipeline.fit(
+        inputs=[train_values],
+        validation_inputs=[validation_values],
+        prediction_length=horizon,
+        finetune_mode="lora",
+        lora_config={"r": 4, "lora_alpha": 8, "lora_dropout": 0.05},
+        context_length=context_length,
+        learning_rate=1e-5,
+        num_steps=steps,
+        batch_size=1,
+        output_dir=output_dir,
+        gradient_accumulation_steps=8,
+    )
+    with torch.inference_mode():
+        forecast = tuned.predict_df(
+            build_context_frame(history), prediction_length=horizon, quantile_levels=[0.1, 0.5, 0.9],
+            id_column="id", timestamp_column="timestamp", target="target",
+        )
+    return pd.Series(forecast["predictions"].to_numpy())

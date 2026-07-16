@@ -35,6 +35,12 @@ uv run stock-forecast --device cuda
 uv run stock-backtest --device cuda --output backtest-results.csv
 ```
 
+可用下列命令将 Chronos-2 LoRA 作为独立候选加入回测。每一折都会从基础权重重新训练 adapter，且内部验证标签严格早于该折的 182 天测试期：
+
+```bash
+uv run stock-backtest --device cuda --include-lora --lora-steps 200 --output lora-backtest-results.csv
+```
+
 仅当 Chronos-2 在多数折中稳定领先时，才应将其作为最终提交模型。
 
 回测会强制从本地 Hugging Face 模型缓存加载 Chronos-2，避免每一折都重复访问网络；请先成功运行一次 `stock-forecast` 完成模型权重下载。
