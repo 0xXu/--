@@ -5,7 +5,7 @@ import pandas as pd
 from stock_forecast.pipeline import ForecastConfig, run_forecast
 
 
-def test_run_forecast_writes_predictions_with_test_index(tmp_path: Path) -> None:
+def test_run_forecast_writes_predictions_with_test_index(tmp_path: Path, monkeypatch) -> None:
     dates = pd.date_range("2020-01-01", periods=12, freq="D")
     train = pd.DataFrame({"price": range(12)}, index=dates)
     test_dates = pd.date_range("2020-01-13", periods=3, freq="D")
@@ -16,9 +16,11 @@ def test_run_forecast_writes_predictions_with_test_index(tmp_path: Path) -> None
     train.to_csv(train_path)
     test.to_csv(test_path)
 
-    result = run_forecast(
-        ForecastConfig(train_path=train_path, test_path=test_path, output_path=output_path, arima_order=(1, 1, 0))
+    monkeypatch.setattr(
+        "stock_forecast.pipeline.forecast_chronos",
+        lambda target, horizon, config: pd.Series([100.0] * horizon),
     )
+    result = run_forecast(ForecastConfig(train_path=train_path, test_path=test_path, output_path=output_path))
 
     assert output_path.exists()
     assert result.index.equals(test_dates)
