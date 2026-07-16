@@ -1,0 +1,30 @@
+[project]
+name = "stock-forecast"
+version = "0.1.0"
+description = "ARIMA-based stock-price forecasting from CSV time series."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib>=3.9",
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "statsmodels>=0.14",
+]
+
+[project.scripts]
+stock-forecast = "stock_forecast.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stock_forecast"]
