@@ -2,15 +2,52 @@
 
 from pathlib import Path
 from typing import TypeAlias
+from urllib.error import URLError
+from urllib.parse import urlparse
+from urllib.request import urlretrieve
+
+import hashlib
+import time
 
 import pandas as pd
 
 PathLike: TypeAlias = str | Path
 
 
-def load_time_series(path_or_url: PathLike, *, target_column: str, require_target: bool) -> pd.DataFrame:
+def _cache_path(url: str, cache_dir: Path) -> Path:
+    """Use a stable, collision-resistant filename for a remote CSV."""
+    source_name = Path(urlparse(url).path).name or "dataset.csv"
+    digest = hashlib.sha256(url.encode()).hexdigest()[:12]
+    return cache_dir / f"{Path(source_name).stem}-{digest}.csv"
+
+
+def _download_with_cache(url: str, cache_dir: Path, attempts: int = 3) -> Path:
+    destination = _cache_path(url, cache_dir)
+    if destination.exists():
+        return destination
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(".part")
+    for attempt in range(attempts):
+        try:
+            urlretrieve(url, temporary)
+            temporary.replace(destination)
+            return destination
+        except URLError:
+            temporary.unlink(missing_ok=True)
+            if attempt == attempts - 1:
+                raise
+            time.sleep(2**attempt)
+    raise AssertionError("unreachable")
+
+
+def load_time_series(
+    path_or_url: PathLike, *, target_column: str, require_target: bool, cache_dir: PathLike | None = None
+) -> pd.DataFrame:
     """Load a date-indexed CSV and validate the expected target column."""
-    frame = pd.read_csv(path_or_url, index_col=0, parse_dates=True)
+    source = path_or_url
+    if cache_dir is not None and isinstance(path_or_url, str) and urlparse(path_or_url).scheme in {"http", "https"}:
+        source = _download_with_cache(path_or_url, Path(cache_dir))
+    frame = pd.read_csv(source, index_col=0, parse_dates=True)
     if not isinstance(frame.index, pd.DatetimeIndex):
         raise ValueError("The first CSV column must be a date index.")
     if frame.index.has_duplicates:

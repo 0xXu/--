@@ -17,8 +17,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--folds", type=int, default=4)
     parser.add_argument("--device", choices=["cuda", "cpu", "auto"], default="cuda")
     parser.add_argument("--output", default="backtest-results.csv")
+    parser.add_argument("--cache-dir", default=".cache/stock-forecast")
     args = parser.parse_args(argv)
-    data = load_time_series(args.train_path, target_column=args.target_column, require_target=True)
+    data = load_time_series(args.train_path, target_column=args.target_column, require_target=True, cache_dir=args.cache_dir)
     target = training_target(data, args.target_column)
     chronos_config = ChronosConfig(device=args.device)
     candidates = [

@@ -21,6 +21,8 @@ uv run stock-forecast \
   --plot predictions/forecast.png
 ```
 
+远程 CSV 会在首次成功下载后缓存至 `.cache/stock-forecast/`；之后回测和预测均直接使用缓存。可用 `--cache-dir` 指定其他缓存位置。
+
 Chronos-2 默认在可用时使用 CUDA；CUDA 环境会启用 BF16、TF32、SDPA 注意力以及 PyTorch inference mode。若没有 CUDA，程序会自动使用 CPU，并在输出中说明实际设备。可通过 `--device cuda` 强制要求 GPU，或通过 `--device cpu` 调试：
 
 ```bash

@@ -23,13 +23,14 @@ class ForecastConfig:
     target_column: str = "price"
     device: Device = "auto"
     chronos_model_id: str = "amazon/chronos-2"
+    cache_dir: PathLike = ".cache/stock-forecast"
     plot_path: PathLike | None = None
 
 
 def run_forecast(config: ForecastConfig) -> pd.DataFrame:
     """Create and persist a submission DataFrame indexed like the test dataset."""
-    train_data = load_time_series(config.train_path, target_column=config.target_column, require_target=True)
-    test_data = load_time_series(config.test_path, target_column=config.target_column, require_target=False)
+    train_data = load_time_series(config.train_path, target_column=config.target_column, require_target=True, cache_dir=config.cache_dir)
+    test_data = load_time_series(config.test_path, target_column=config.target_column, require_target=False, cache_dir=config.cache_dir)
     target = training_target(train_data, config.target_column)
 
     predictions = forecast_chronos(

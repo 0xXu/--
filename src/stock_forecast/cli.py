@@ -14,6 +14,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target-column", default="price", help="Column to forecast.")
     parser.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto", help="Chronos execution device (default: auto).")
     parser.add_argument("--chronos-model-id", default="amazon/chronos-2", help="Hugging Face Chronos model ID.")
+    parser.add_argument("--cache-dir", default=".cache/stock-forecast", help="Persistent CSV download cache directory.")
     parser.add_argument("--plot", help="Optional PNG output path for a forecast chart.")
     return parser
 
@@ -28,6 +29,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             target_column=args.target_column,
             device=args.device,
             chronos_model_id=args.chronos_model_id,
+            cache_dir=args.cache_dir,
             plot_path=args.plot,
         )
     )
