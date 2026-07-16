@@ -20,7 +20,7 @@ def test_run_forecast_writes_predictions_with_test_index(tmp_path: Path, monkeyp
         "stock_forecast.pipeline.forecast_chronos",
         lambda target, horizon, config: pd.Series([100.0] * horizon),
     )
-    result = run_forecast(ForecastConfig(train_path=train_path, test_path=test_path, output_path=output_path))
+    result = run_forecast(ForecastConfig(train_path=train_path, test_path=test_path, output_path=output_path, model="chronos"))
 
     assert output_path.exists()
     assert result.index.equals(test_dates)

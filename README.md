@@ -11,7 +11,7 @@ uv sync --dev
 uv run stock-forecast
 ```
 
-默认使用原 Notebook 中的数据地址，结果写入当前目录的 `submission.csv`。也可以指定本地文件或其他地址：
+默认使用原 Notebook 中的数据地址，并在持久性、阻尼 ETS、受限自动 ARIMA 及对数价格候选间进行 4 折、182 天滚动回测。只有候选在平均误差、获胜折数和最近一折都以至少 3% 优于持久性基线时，才会替代基线；结果写入当前目录的 `submission.csv`。也可以指定本地文件或其他地址：
 
 ```bash
 uv run stock-forecast \
@@ -20,6 +20,8 @@ uv run stock-forecast \
   --output predictions/submission.csv \
   --plot predictions/forecast.png
 ```
+
+用 `--selection-output` 保存模型排名、每折 MAE/RMSE/MASE；同目录会额外生成 `*-step-mae.csv`，用于查看 182 个预测步长上的误差。`--model auto --include-chronos` 会将 Chronos-2 也放入同一回测门槛；需要强制生成其预测时才使用 `--model chronos`。Chronos 不再是未经回测验证的默认提交路径。
 
 远程 CSV 会在首次成功下载后缓存至 `.cache/stock-forecast/`；之后回测和预测均直接使用缓存。可用 `--cache-dir` 指定其他缓存位置。
 

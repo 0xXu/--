@@ -54,7 +54,13 @@ def load_time_series(
         raise ValueError("The date index must not contain duplicate values.")
     if require_target and target_column not in frame.columns:
         raise ValueError(f"Training data must contain a '{target_column}' column.")
-    return frame.sort_index()
+    frame = frame.sort_index()
+    if len(frame) > 1:
+        expected = pd.date_range(frame.index[0], frame.index[-1], freq="D")
+        if not frame.index.equals(expected):
+            raise ValueError("The date index must be equally spaced at daily frequency with no missing dates.")
+        frame.index.freq = "D"
+    return frame
 
 
 def training_target(training_data: pd.DataFrame, target_column: str) -> pd.Series:
@@ -65,3 +71,12 @@ def training_target(training_data: pd.DataFrame, target_column: str) -> pd.Serie
     if target.isna().any():
         raise ValueError("Training target must not contain missing values.")
     return target
+
+
+def validate_forecast_dates(training_data: pd.DataFrame, test_data: pd.DataFrame) -> None:
+    """Reject submissions whose test timestamps cannot follow the observed series."""
+    if len(test_data.index) == 0:
+        raise ValueError("Test data must contain at least one timestamp.")
+    expected_start = training_data.index[-1] + pd.Timedelta(days=1)
+    if test_data.index[0] != expected_start:
+        raise ValueError("Test timestamps must immediately follow the final training timestamp.")

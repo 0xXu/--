@@ -5,7 +5,7 @@ from collections.abc import Sequence
 
 from .chronos import ChronosConfig, forecast_chronos, forecast_chronos_lora
 from .data import load_time_series, training_target
-from .evaluation import arima_forecast, ets_forecast, evaluate, persistence_forecast, results_frame
+from .evaluation import evaluate, results_frame, statistical_candidates, write_backtest_reports
 from .pipeline import DEFAULT_TRAIN_URL
 
 
@@ -24,17 +24,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     data = load_time_series(args.train_path, target_column=args.target_column, require_target=True, cache_dir=args.cache_dir)
     target = training_target(data, args.target_column)
     chronos_config = ChronosConfig(device=args.device, local_files_only=True)
-    candidates = [
-        ("persistence", persistence_forecast),
-        ("damped_ets", ets_forecast),
-        ("arima_7_1_2", arima_forecast),
-        ("chronos_2", lambda history, horizon: forecast_chronos(history, horizon, chronos_config)),
-    ]
+    candidates = list(statistical_candidates().items())
+    candidates.append(("chronos_2", lambda history, horizon: forecast_chronos(history, horizon, chronos_config)))
     if args.include_lora:
         candidates.append(
             ("chronos_2_lora", lambda history, horizon: forecast_chronos_lora(history, horizon, chronos_config, steps=args.lora_steps))
         )
-    leaderboard = results_frame([evaluate(name, predictor, target, horizon=args.horizon, folds=args.folds) for name, predictor in candidates])
-    leaderboard.to_csv(args.output, index=False)
+    results = [evaluate(name, predictor, target, horizon=args.horizon, folds=args.folds) for name, predictor in candidates]
+    leaderboard_path, _ = write_backtest_reports(results, args.output)
+    leaderboard = results_frame(results)
     print(leaderboard.to_string(index=False))
-    print(f"Wrote rolling-backtest results to {args.output}")
+    print(f"Wrote rolling-backtest results to {leaderboard_path}")
