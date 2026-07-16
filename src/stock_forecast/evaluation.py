@@ -27,8 +27,29 @@ class BacktestResult:
     step_mae: tuple[float, ...]
 
 
+@dataclass(frozen=True)
+class EnsemblePlan:
+    """Weights learned on calibration folds and checked on a held-out final fold."""
+
+    weights: tuple[tuple[str, float], ...]
+    accepted: bool
+    calibration_mae: float
+    calibration_baseline_mae: float
+    calibration_fold_wins: int
+    confirmation_mae: float
+    confirmation_baseline_mae: float
+
+
 def persistence_forecast(history: pd.Series, horizon: int) -> pd.Series:
     return pd.Series(np.repeat(history.iloc[-1], horizon))
+
+
+def seasonal_forecast(history: pd.Series, horizon: int, *, lag: int = 2) -> pd.Series:
+    """Repeat a short, explicitly tested cycle without recursively feeding predictions."""
+    if lag <= 0 or len(history) < lag:
+        raise ValueError("Seasonal lag must be positive and available in history.")
+    values = history.to_numpy()
+    return pd.Series([values[len(values) - lag + step % lag] for step in range(horizon)])
 
 
 def ets_forecast(history: pd.Series, horizon: int) -> pd.Series:
@@ -38,6 +59,65 @@ def ets_forecast(history: pd.Series, horizon: int) -> pd.Series:
 
 def arima_forecast(history: pd.Series, horizon: int) -> pd.Series:
     return pd.Series(ARIMA(history, order=(7, 1, 2)).fit().forecast(horizon).to_numpy())
+
+
+def analog_forecast(
+    history: pd.Series, horizon: int, *, context_length: int = 60, neighbors: int = 5, stride: int = 7
+) -> pd.Series:
+    """Forecast from the subsequent paths of historically similar return windows."""
+    if context_length <= 0 or neighbors <= 0 or stride <= 0:
+        raise ValueError("Analog parameters must be positive.")
+    if (history <= 0).any():
+        raise ValueError("Analog forecasting requires strictly positive prices.")
+    values = np.log(history.to_numpy(dtype=float))
+    if len(values) < context_length + horizon + 2:
+        return persistence_forecast(history, horizon)
+    recent = np.diff(values[-(context_length + 1) :])
+    recent_scale = max(float(recent.std()), 1e-8)
+    normalized_recent = (recent - recent.mean()) / recent_scale
+    matches: list[tuple[float, np.ndarray]] = []
+    for end in range(context_length + 1, len(values) - horizon + 1, stride):
+        pattern = np.diff(values[end - context_length - 1 : end])
+        pattern_scale = max(float(pattern.std()), 1e-8)
+        distance = float(np.mean((normalized_recent - (pattern - pattern.mean()) / pattern_scale) ** 2))
+        future_relative_path = values[end : end + horizon] - values[end - 1]
+        matches.append((distance, future_relative_path))
+    if not matches:
+        return persistence_forecast(history, horizon)
+    closest = sorted(matches, key=lambda match: match[0])[:neighbors]
+    distances = np.array([match[0] for match in closest])
+    weights = 1 / np.maximum(distances, 1e-8)
+    weights /= weights.sum()
+    paths = np.stack([match[1] for match in closest])
+    return pd.Series(np.exp(values[-1] + np.average(paths, axis=0, weights=weights)))
+
+
+def _project_simplex(values: np.ndarray) -> np.ndarray:
+    """Project a vector onto the non-negative simplex with sum equal to one."""
+    sorted_values = np.sort(values)[::-1]
+    cumulative = np.cumsum(sorted_values) - 1
+    active = np.nonzero(sorted_values - cumulative / np.arange(1, len(values) + 1) > 0)[0]
+    threshold = cumulative[active[-1]] / (active[-1] + 1)
+    return np.maximum(values - threshold, 0)
+
+
+def fit_nonnegative_weights(predictions: pd.DataFrame, actual: pd.Series, *, iterations: int = 2_000) -> pd.Series:
+    """Fit convex weights for the competition MAE objective without a new dependency."""
+    matrix = predictions.to_numpy(dtype=float, copy=True)
+    target = actual.to_numpy(dtype=float, copy=True)
+    if len(matrix) != len(target) or not len(target):
+        raise ValueError("Predictions and actual values must be non-empty and aligned.")
+    scale = max(float(np.mean(np.abs(target))), 1e-8)
+    matrix /= scale
+    target /= scale
+    weights = np.full(matrix.shape[1], 1 / matrix.shape[1])
+    for iteration in range(iterations):
+        gradient = matrix.T @ np.sign(matrix @ weights - target) / len(target)
+        updated = _project_simplex(weights - 0.2 / np.sqrt(iteration + 1) * gradient)
+        if np.allclose(updated, weights, atol=1e-9):
+            break
+        weights = updated
+    return pd.Series(weights, index=predictions.columns)
 
 
 def auto_arima_forecast(history: pd.Series, horizon: int) -> pd.Series:
@@ -90,6 +170,96 @@ def statistical_candidates() -> dict[str, ForecastFunction]:
         "damped_ets_log_diff": lambda history, horizon: transformed_forecast(ets_forecast, "log_diff", history, horizon),
         "auto_arima_log_diff": lambda history, horizon: transformed_forecast(auto_arima_forecast, "log_diff", history, horizon),
     }
+
+
+def _trailing(base: ForecastFunction, window: int) -> ForecastFunction:
+    return lambda history, horizon: base(history.iloc[-window:], horizon)
+
+
+def competition_candidates() -> dict[str, ForecastFunction]:
+    """A compact, diverse candidate pool suitable for one long univariate series."""
+    return {
+        "persistence": persistence_forecast,
+        "seasonal_2": lambda history, horizon: seasonal_forecast(history, horizon, lag=2),
+        "ets_full": ets_forecast,
+        "ets_90": _trailing(ets_forecast, 90),
+        "ets_182": _trailing(ets_forecast, 182),
+        "ets_365": _trailing(ets_forecast, 365),
+        "ets_log_diff_full": lambda history, horizon: transformed_forecast(ets_forecast, "log_diff", history, horizon),
+        "ets_log_diff_365": lambda history, horizon: transformed_forecast(ets_forecast, "log_diff", history.iloc[-365:], horizon),
+        "analog_365": lambda history, horizon: analog_forecast(history.iloc[-365:], horizon),
+        "analog_730": lambda history, horizon: analog_forecast(history.iloc[-730:], horizon),
+        "analog_full": analog_forecast,
+    }
+
+
+def oof_prediction_frame(
+    candidates: dict[str, ForecastFunction], target: pd.Series, *, horizon: int, folds: int
+) -> pd.DataFrame:
+    """Generate aligned out-of-fold paths once for reporting and ensemble fitting."""
+    if horizon <= 0 or folds < 2 or len(target) < horizon * (folds + 1):
+        raise ValueError("Not enough observations for the requested horizon and folds.")
+    frames: list[pd.DataFrame] = []
+    for fold_number, fold in enumerate(range(folds, 0, -1), start=1):
+        cutoff = len(target) - fold * horizon
+        history = target.iloc[:cutoff]
+        actual = target.iloc[cutoff : cutoff + horizon].to_numpy()
+        frame = pd.DataFrame(
+            {"fold": fold_number, "cutoff": history.index[-1], "date": target.index[cutoff : cutoff + horizon], "step": np.arange(1, horizon + 1), "actual": actual}
+        )
+        for name, forecast in candidates.items():
+            predicted = forecast(history, horizon).to_numpy(dtype=float)
+            if len(predicted) != horizon or not np.isfinite(predicted).all():
+                raise ValueError(f"{name} returned invalid predictions in fold {fold_number}.")
+            frame[name] = predicted
+        frames.append(frame)
+    return pd.concat(frames, ignore_index=True)
+
+
+def select_oof_ensemble(
+    oof: pd.DataFrame, *, baseline_model: str = "persistence", min_improvement: float = 0.03
+) -> EnsemblePlan:
+    """Fit weights on all but the most recent fold, then gate them on that fold."""
+    folds = sorted(oof["fold"].unique())
+    if len(folds) < 2:
+        raise ValueError("At least two folds are required for ensemble calibration and confirmation.")
+    candidates = [column for column in oof.columns if column not in {"fold", "cutoff", "date", "step", "actual"}]
+    calibration = oof[oof["fold"] != folds[-1]]
+    confirmation = oof[oof["fold"] == folds[-1]]
+    weights = fit_nonnegative_weights(calibration[candidates], calibration["actual"])
+    calibration_prediction = calibration[candidates].to_numpy() @ weights.to_numpy()
+    confirmation_prediction = confirmation[candidates].to_numpy() @ weights.to_numpy()
+    calibration_mae = float(np.mean(np.abs(calibration["actual"].to_numpy() - calibration_prediction)))
+    calibration_baseline_mae = float(np.mean(np.abs(calibration["actual"].to_numpy() - calibration[baseline_model].to_numpy())))
+    calibration_fold_wins = sum(
+        np.mean(np.abs(group["actual"].to_numpy() - group[candidates].to_numpy() @ weights.to_numpy()))
+        < np.mean(np.abs(group["actual"].to_numpy() - group[baseline_model].to_numpy()))
+        for _, group in calibration.groupby("fold")
+    )
+    confirmation_mae = float(np.mean(np.abs(confirmation["actual"].to_numpy() - confirmation_prediction)))
+    confirmation_baseline_mae = float(np.mean(np.abs(confirmation["actual"].to_numpy() - confirmation[baseline_model].to_numpy())))
+    accepted = (
+        calibration_mae <= calibration_baseline_mae * (1 - min_improvement)
+        and calibration_fold_wins >= (len(folds) - 1 + 1) // 2
+        and confirmation_mae <= confirmation_baseline_mae * (1 - min_improvement)
+    )
+    return EnsemblePlan(
+        tuple((name, float(weight)) for name, weight in weights.items() if weight > 1e-8),
+        bool(accepted),
+        calibration_mae,
+        calibration_baseline_mae,
+        int(calibration_fold_wins),
+        confirmation_mae,
+        confirmation_baseline_mae,
+    )
+
+
+def ensemble_forecast(candidates: dict[str, ForecastFunction], weights: tuple[tuple[str, float], ...], history: pd.Series, horizon: int) -> pd.Series:
+    """Produce the final convex blend from the models selected before the confirmation fold."""
+    prediction = np.zeros(horizon)
+    for name, weight in weights:
+        prediction += weight * candidates[name](history, horizon).to_numpy(dtype=float)
+    return pd.Series(prediction)
 
 
 def evaluate(model: str, forecast: ForecastFunction, target: pd.Series, *, horizon: int, folds: int) -> BacktestResult:

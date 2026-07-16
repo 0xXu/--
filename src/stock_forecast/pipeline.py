@@ -1,13 +1,23 @@
 """Application orchestration for stock-price forecasting."""
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 
 import pandas as pd
 
 from .chronos import ChronosConfig, Device, forecast_chronos
 from .data import PathLike, load_time_series, training_target, validate_forecast_dates
-from .evaluation import ForecastFunction, evaluate, select_champion, statistical_candidates, write_backtest_reports
+from .evaluation import (
+    ForecastFunction,
+    competition_candidates,
+    ensemble_forecast,
+    evaluate,
+    oof_prediction_frame,
+    select_oof_ensemble,
+    statistical_candidates,
+    write_backtest_reports,
+)
 from .plotting import save_forecast_plot
 
 DEFAULT_TRAIN_URL = "https://www.dropbox.com/scl/fi/1gzfa2otxd3vqruw4n98e/train.csv?rlkey=2e1kobduti6fqh4bu7r0srpo6&st=fhqqu5xz&dl=1"
@@ -50,12 +60,31 @@ def run_forecast(config: ForecastConfig) -> pd.DataFrame:
         )
         selected_name = "chronos"
     elif config.model == "auto":
-        results = [evaluate(name, predictor, target, horizon=len(test_data), folds=config.backtest_folds) for name, predictor in candidates.items()]
-        champion = select_champion(results)
-        selected_name = champion.model
-        predictor = candidates[selected_name]
+        candidates = competition_candidates() | ({"chronos": candidates["chronos"]} if "chronos" in candidates else {})
+        oof = oof_prediction_frame(candidates, target, horizon=len(test_data), folds=config.backtest_folds)
+        plan = select_oof_ensemble(oof)
+        if plan.accepted:
+            selected_name = "oof_ensemble"
+            predictor = lambda history, horizon: ensemble_forecast(candidates, plan.weights, history, horizon)
+        else:
+            selected_name = "persistence"
+            predictor = candidates[selected_name]
         if config.selection_output_path is not None:
+            results = [evaluate(name, candidate, target, horizon=len(test_data), folds=config.backtest_folds) for name, candidate in candidates.items()]
             write_backtest_reports(results, config.selection_output_path)
+            selection_path = Path(config.selection_output_path)
+            oof.to_csv(selection_path.with_name(f"{selection_path.stem}-oof.csv"), index=False)
+            selection_path.with_name(f"{selection_path.stem}-ensemble.json").write_text(
+                json.dumps({
+                    "objective": "MAE", "accepted": plan.accepted, "weights": dict(plan.weights),
+                    "calibration_mae": plan.calibration_mae, "calibration_baseline_mae": plan.calibration_baseline_mae,
+                    "calibration_fold_wins": plan.calibration_fold_wins, "confirmation_mae": plan.confirmation_mae,
+                    "confirmation_baseline_mae": plan.confirmation_baseline_mae,
+                    "confirmation_improvement": 1 - plan.confirmation_mae / plan.confirmation_baseline_mae,
+                    "candidate_names": list(candidates),
+                }, indent=2),
+                encoding="utf-8",
+            )
     elif config.model in candidates:
         selected_name = config.model
         predictor = candidates[selected_name]
