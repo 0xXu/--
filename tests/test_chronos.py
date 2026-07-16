@@ -113,7 +113,7 @@ def test_load_pipeline_uses_sdpa_and_asserts_cuda_placement() -> None:
     assert FakePipeline.calls == [
         (
             "amazon/chronos-2",
-            {"device_map": "cuda", "torch_dtype": "bf16", "attn_implementation": "sdpa"},
+            {"device_map": "cuda", "torch_dtype": "bf16", "attn_implementation": "sdpa", "local_files_only": False},
         )
     ]
 

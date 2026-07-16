@@ -37,6 +37,8 @@ uv run stock-backtest --device cuda --output backtest-results.csv
 
 仅当 Chronos-2 在多数折中稳定领先时，才应将其作为最终提交模型。
 
+回测会强制从本地 Hugging Face 模型缓存加载 Chronos-2，避免每一折都重复访问网络；请先成功运行一次 `stock-forecast` 完成模型权重下载。
+
 在 Windows + NVIDIA GPU 上，请使用 Python 3.12；`uv` 会自动创建它。项目已配置 PyTorch 的 CUDA 12.8 官方 wheel 源，RTX 4060 的 CUDA 13.3 驱动可向后兼容。
 
 训练集与测试集的第一列必须是可解析的日期索引；训练集必须含有 `price` 列。测试集只需提供日期索引（即使含有 `price` 列，也不会作为输入值使用）。

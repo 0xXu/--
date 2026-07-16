@@ -14,6 +14,7 @@ class ChronosConfig:
 
     model_id: str = "amazon/chronos-2"
     device: Device = "auto"
+    local_files_only: bool = False
 
 
 def _load_torch() -> object:
@@ -71,6 +72,7 @@ def load_pipeline(pipeline_class: object, config: ChronosConfig, device: str, dt
         device_map=device,
         torch_dtype=dtype,
         attn_implementation="sdpa" if device == "cuda" else "eager",
+        local_files_only=config.local_files_only,
     )
     if device == "cuda":
         assert_cuda_residency(pipeline)

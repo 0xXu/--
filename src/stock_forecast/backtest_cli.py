@@ -21,7 +21,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
     data = load_time_series(args.train_path, target_column=args.target_column, require_target=True, cache_dir=args.cache_dir)
     target = training_target(data, args.target_column)
-    chronos_config = ChronosConfig(device=args.device)
+    chronos_config = ChronosConfig(device=args.device, local_files_only=True)
     candidates = [
         ("persistence", persistence_forecast),
         ("damped_ets", ets_forecast),
