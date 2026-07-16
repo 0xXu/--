@@ -15,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 stock-forecast = "stock_forecast.cli:main"
+stock-backtest = "stock_forecast.backtest_cli:main"
 
 [dependency-groups]
 dev = [
